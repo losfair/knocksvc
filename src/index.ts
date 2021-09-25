@@ -39,7 +39,6 @@ Router.get(
 <p>Your IP address is ${req.headers.get("x-rw-client-ip")}.</p>
 <p><a href="/current">List of currently authenticated services</a></p>
 <p><a href="/enter">Enter</a></p>
-<p><a href="/leave">Leave</a></p>
 <p>Knocksvc | <a href="https://univalence.me">Univalence Labs</a></p>
 </body>
 </html>
@@ -122,21 +121,6 @@ Router.get("/current", async (request) => {
   });
 });
 
-Router.get("/leave", async (request) => {
-  const clientIp = request.headers.get("x-rw-client-ip");
-  if (!clientIp) throw new Error("missing client ip");
-
-  await appDB.exec(
-    "update ipgrant set active = 0 where ipaddr = :ip and created_at > :earliest",
-    {
-      ip: ["s", clientIp],
-      earliest: ["d", new Date(Date.now() - ttlMs)],
-    },
-    ""
-  );
-  return new Response("ok");
-});
-
 Router.get("/enter", async (request) => {
   const clientIp = request.headers.get("x-rw-client-ip");
   if (!clientIp) throw new Error("missing client ip");
@@ -155,7 +139,10 @@ Router.get("/enter", async (request) => {
     auth: tokenInfo.authentication.token,
     userAgent: "knocksvc on rwv2 by z@univalence.me",
   });
-  const emailList = await octokit.rest.users.listEmailsForAuthenticated();
+  const [user, emailList] = await Promise.all([
+    octokit.rest.users.getAuthenticated(),
+    octokit.rest.users.listEmailsForAuthenticated(),
+  ]);
   const verifiedEmails = emailList.data
     .filter((x) => x.verified)
     .map((x) => x.email);
@@ -173,24 +160,36 @@ Router.get("/enter", async (request) => {
     for (const row of allowedServices) {
       const [svcname] = row;
       if (svcname) {
-        await appDB.exec(
-          "insert into ipgrant (ipaddr, svcname) values(:ip, :svc)",
-          {
-            ip: ["s", clientIp],
-            svc: ["s", svcname],
-          },
-          ""
-        );
-        if (!grantInfo[svcname]) grantInfo[svcname] = [];
+        if (!grantInfo[svcname]) {
+          grantInfo[svcname] = [];
+          await appDB.exec(
+            "insert into ipgrant (ipaddr, svcname, grantby) values(:ip, :svc, :gb)",
+            {
+              ip: ["s", clientIp],
+              svc: ["s", svcname],
+              gb: ["s", user.data.login],
+            },
+            ""
+          );
+        }
         grantInfo[svcname].push(email);
       }
     }
   }
   await appDB.commit();
 
-  return new Response(JSON.stringify(grantInfo, null, 2), {
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
+  return new Response(
+    JSON.stringify(
+      {
+        granted: grantInfo,
+      },
+      null,
+      2
+    ),
+    {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
 });
