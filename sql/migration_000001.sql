@@ -5,7 +5,8 @@ create table ipgrant (
   active tinyint not null default 1,
   grantby varchar(255) not null,
   created_at datetime(6) default current_timestamp(6) not null,
-  index by_ipaddr_x_created_at (ipaddr, created_at)
+  index by_ipaddr_x_created_at (ipaddr, created_at),
+  index by_grantby_x_created_at (grantby, created_at)
 );
 
 create table allowlist (

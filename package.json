@@ -20,6 +20,7 @@
   },
   "homepage": "https://github.com/losfair/knocksvc#readme",
   "devDependencies": {
+    "@types/cookie": "^0.4.1",
     "jsland-types": "link:../rwv2/jsland-types",
     "prettier": "^2.4.1",
     "ts-loader": "^9.2.5",
@@ -27,5 +28,8 @@
     "webpack": "^5.11.0",
     "webpack-bundle-analyzer": "^4.4.2",
     "webpack-cli": "^4.3.1"
+  },
+  "dependencies": {
+    "cookie": "^0.4.1"
   }
 }

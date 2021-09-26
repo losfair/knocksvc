@@ -1,6 +1,13 @@
 /// <reference path="../node_modules/jsland-types/src/index.d.ts" />
 
 import { JTDSchemaType } from "jsland-types/src/validation/jtd";
+import {
+  ensureAuthenticatedGhid,
+  getAuthenticatedGhid,
+  GhidInfo,
+} from "./ghid";
+import { exportPubkey, sign } from "./signature";
+import "./tmpgrant";
 
 const ghClientId = App.mustGetEnv("ghClientId");
 const ghClientSecret = App.mustGetEnv("ghClientSecret");
@@ -26,30 +33,68 @@ const schema_SvcQuery: JTDSchemaType<SvcQuery> = {
 };
 const validator_SvcQuery = new Validation.JTD.JTDStaticSchema(schema_SvcQuery);
 
-Router.get(
-  "/",
-  (req) =>
-    new Response(
+Router.get("/", async (req) => {
+  const clientIp = req.headers.get("x-rw-client-ip") || "";
+  const ghidInfo = getAuthenticatedGhid(req);
+  return new Response(
+    Template.render(
       `
 <!DOCTYPE html>
 <html>
 <head>
 </head>
 <body>
-<p>Your IP address is ${req.headers.get("x-rw-client-ip")}.</p>
-<p><a href="/current">List of currently authenticated services</a></p>
-<p><a href="/enter">Enter</a></p>
+<p>Your IP address: <code>{{ clientIp }}</code></p>
+<p>Server pubkey: <code>{{ pubKey }}</code></p>
+<p>Authenticated services by IP: <code>{{ authlist }}</code></p>
+<p>
+GitHub ID: <code>{{ ghid }}</code> <a href="/ghlogin">relogin</a>
+</p>
+<p>Authenticated services by GitHub ID: <code>{{ grantList }}</code></p>
+<p>
+<form method="post" action="/enter">
+  <span>Authenticate this IP address</span>
+  <button type="submit">Enter</button>
+</form>
+<form method="post" action="/ghlogout">
+  <span>Reset GitHub login status</span>
+  <button type="submit">Logout</button>
+</form>
+<form method="post" action="/revoke">
+  <span>Revoke all IP grants associated with this GitHub ID</span>
+  <button type="submit">Revoke</button>
+</form>
+</p>
+<hr>
 <p>Knocksvc | <a href="https://univalence.me">Univalence Labs</a></p>
 </body>
 </html>
   `.trim(),
       {
-        headers: {
-          "Content-Type": "text/html",
-        },
+        clientIp,
+        pubKey: exportPubkey(),
+        authlist: (await getSvclistByClientIp(clientIp)).join(", "),
+        ghid:
+          typeof ghidInfo === "string" ? "[" + ghidInfo + "]" : ghidInfo.login,
+        grantList:
+          typeof ghidInfo === "string"
+            ? ""
+            : (await getGrantListByGrantby(ghidInfo.login))
+                .map((x) => x.ipaddr + "/" + x.svcname)
+                .join(", "),
       }
-    )
-);
+    ),
+    {
+      headers: {
+        "Content-Type": "text/html",
+      },
+    }
+  );
+});
+
+Router.get("/pub", (req) => {
+  return new Response(exportPubkey());
+});
 
 Router.post("/query", async (request) => {
   const body = await request.json();
@@ -99,32 +144,70 @@ Router.post("/query", async (request) => {
   );
 });
 
-Router.get("/current", async (request) => {
-  const clientIp = request.headers.get("x-rw-client-ip");
-  if (!clientIp) throw new Error("missing client ip");
-
+async function getSvclistByClientIp(clientIp: string): Promise<string[]> {
   const svclist = (
     await appDB.exec(
-      "select svcname from ipgrant where ipaddr = :ip and created_at > :earliest and active = 1",
+      "select distinct svcname from ipgrant where ipaddr = :ip and created_at > :earliest and active = 1",
       {
         ip: ["s", clientIp],
         earliest: ["d", new Date(Date.now() - ttlMs)],
       },
       "s"
     )
-  ).map((x) => x[0]);
+  ).map((x) => x[0]!);
+  return svclist;
+}
 
-  return new Response(JSON.stringify(svclist, null, 2), {
+async function getGrantListByGrantby(
+  by: string
+): Promise<{ ipaddr: string; svcname: string }[]> {
+  const list = (
+    await appDB.exec(
+      `
+      select ipaddr, svcname from ipgrant
+        where grantby = :by
+          and created_at > :earliest
+          and active = 1
+          group by ipaddr, svcname
+      `,
+      {
+        by: ["s", by],
+        earliest: ["d", new Date(Date.now() - ttlMs)],
+      },
+      "ss"
+    )
+  ).map(([ipaddr, svcname]) => ({
+    ipaddr: ipaddr!,
+    svcname: svcname!,
+  }));
+  return list;
+}
+
+Router.get("/current", async (request) => {
+  const clientIp = request.headers.get("x-rw-client-ip");
+  if (!clientIp) throw new Error("missing client ip");
+
+  return new Response(
+    JSON.stringify(await getSvclistByClientIp(clientIp), null, 2),
+    {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
+  );
+});
+
+Router.post("/ghlogout", async (request) => {
+  return new Response(null, {
+    status: 302,
     headers: {
-      "Content-Type": "application/json",
+      location: "/",
+      "set-cookie": "knock-ghid=; Expires=" + new Date(0).toUTCString(),
     },
   });
 });
 
-Router.get("/enter", async (request) => {
-  const clientIp = request.headers.get("x-rw-client-ip");
-  if (!clientIp) throw new Error("missing client ip");
-
+Router.get("/ghlogin", async (request) => {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   if (!code) {
@@ -146,10 +229,56 @@ Router.get("/enter", async (request) => {
   const verifiedEmails = emailList.data
     .filter((x) => x.verified)
     .map((x) => x.email);
-  const grantInfo: Record<string, string[]> = {};
+
+  const ghidInfo: GhidInfo = {
+    login: user.data.login,
+    emails: verifiedEmails,
+  };
+  const signed = sign(
+    {
+      type: "ghid",
+      ...ghidInfo,
+    },
+    3600 * 1000
+  );
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: "/",
+      "set-cookie": `knock-ghid=${signed}; Secure; HttpOnly; Path=/; SameSite=Lax`,
+    },
+  });
+});
+
+Router.post("/revoke", async (request) => {
+  const clientIp = request.headers.get("x-rw-client-ip");
+  if (!clientIp) throw new Error("missing client ip");
+
+  const ghidInfo = ensureAuthenticatedGhid(request);
+  if (ghidInfo instanceof Response) return ghidInfo;
+
+  await appDB.exec(
+    "update ipgrant set active = 0 where grantby = :login and created_at > :earliest",
+    {
+      login: ["s", ghidInfo.login],
+      earliest: ["d", new Date(Date.now() - ttlMs)],
+    },
+    ""
+  );
+  return Response.redirect("/", 302);
+});
+
+Router.post("/enter", async (request) => {
+  const clientIp = request.headers.get("x-rw-client-ip");
+  if (!clientIp) throw new Error("missing client ip");
+
+  const ghidInfo = ensureAuthenticatedGhid(request);
+  if (ghidInfo instanceof Response) return ghidInfo;
+
+  const grantInfo: Record<string, boolean> = {};
 
   await appDB.startTransaction();
-  for (const email of verifiedEmails) {
+  for (const email of ghidInfo.emails) {
     const allowedServices = await appDB.exec(
       "select svcname from allowlist where email = :email",
       {
@@ -161,35 +290,20 @@ Router.get("/enter", async (request) => {
       const [svcname] = row;
       if (svcname) {
         if (!grantInfo[svcname]) {
-          grantInfo[svcname] = [];
+          grantInfo[svcname] = true;
           await appDB.exec(
             "insert into ipgrant (ipaddr, svcname, grantby) values(:ip, :svc, :gb)",
             {
               ip: ["s", clientIp],
               svc: ["s", svcname],
-              gb: ["s", user.data.login],
+              gb: ["s", ghidInfo.login],
             },
             ""
           );
         }
-        grantInfo[svcname].push(email);
       }
     }
   }
   await appDB.commit();
-
-  return new Response(
-    JSON.stringify(
-      {
-        granted: grantInfo,
-      },
-      null,
-      2
-    ),
-    {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    }
-  );
+  return Response.redirect("/", 302);
 });

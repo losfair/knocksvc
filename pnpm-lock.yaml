@@ -1,6 +1,8 @@
 lockfileVersion: 5.3
 
 specifiers:
+  '@types/cookie': ^0.4.1
+  cookie: ^0.4.1
   jsland-types: link:../rwv2/jsland-types
   prettier: ^2.4.1
   ts-loader: ^9.2.5
@@ -9,7 +11,11 @@ specifiers:
   webpack-bundle-analyzer: ^4.4.2
   webpack-cli: ^4.3.1
 
+dependencies:
+  cookie: 0.4.1
+
 devDependencies:
+  '@types/cookie': 0.4.1
   jsland-types: link:../rwv2/jsland-types
   prettier: 2.4.1
   ts-loader: 9.2.6_typescript@4.4.3+webpack@5.54.0
@@ -27,6 +33,10 @@ packages:
 
   /@polka/url/1.0.0-next.20:
     resolution: {integrity: sha512-88p7+M0QGxKpmnkfXjS4V26AnoC/eiqZutE8GLdaI5X12NY75bXSdTY9NkmYb2Xyk1O+MmkuO6Frmsj84V6I8Q==}
+    dev: true
+
+  /@types/cookie/0.4.1:
+    resolution: {integrity: sha512-XW/Aa8APYr6jSVVA1y/DEIZX0/GMKLEVekNG727R8cs56ahETkRAy/3DR7+fJyh7oUgGwNQaRfXCun0+KbWY7Q==}
     dev: true
 
   /@types/eslint-scope/3.7.1:
@@ -322,6 +332,11 @@ packages:
     resolution: {integrity: sha512-QrWXB+ZQSVPmIWIhtEO9H+gwHaMGYiF5ChvoJ+K9ZGHG/sVsa6yiesAD1GC/x46sET00Xlwo1u49RVVVzvcSkw==}
     engines: {node: '>= 10'}
     dev: true
+
+  /cookie/0.4.1:
+    resolution: {integrity: sha512-ZwrFkGJxUR3EIoXtO+yVE69Eb7KlixbaeAWfBQB9vVsNn/o+Yw69gBWSSDK825hQNdN+wF8zELf3dFNl/kxkUA==}
+    engines: {node: '>= 0.6'}
+    dev: false
 
   /cross-spawn/7.0.3:
     resolution: {integrity: sha512-iRDPJKUPVEND7dHPO8rkbOnPpyDygcDFtWjpeWNCgy8WP2rXcxXL8TskReQl6OrB2G7+UJrags1q15Fudc7G6w==}
