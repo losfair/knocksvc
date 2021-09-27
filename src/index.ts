@@ -281,7 +281,6 @@ Router.get("/enter_crypto", async (request) => {
   if (!svcname) return new Response("missing svcname");
   const callback = url.searchParams.get("callback");
   if (!callback) return new Response("missing callback");
-  const referrer = request.headers.get("referer") || "";
 
   return new Response(
     Template.render(
@@ -291,7 +290,7 @@ Router.get("/enter_crypto", async (request) => {
 <head>
 </head>
 <body>
-<p>Referrer: {{ referrer }}<br>Callback: {{ callback }}</p>
+<p>Callback: {{ callback }}</p>
 <form method="post">
   <span>Cryptographically authenticate service <strong>{{ svcname }}</strong> with GHID <strong>{{ ghid }}</strong></span>
   <button type="submit">OK</button>
@@ -300,7 +299,6 @@ Router.get("/enter_crypto", async (request) => {
 </html>
   `.trim(),
       {
-        referrer,
         callback,
         svcname,
         ghid: ghidInfo.login,
