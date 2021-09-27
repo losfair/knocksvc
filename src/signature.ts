@@ -16,7 +16,11 @@ type SignaturePayloadData =
     }
   | ({
       type: "ghid";
-    } & GhidInfo);
+    } & GhidInfo)
+  | {
+      type: "svcgrant";
+      svcname: string;
+    };
 
 const secKey = new NativeCrypto.Ed25519.SecretKey(
   Codec.b64decode(App.mustGetEnv("sigSecret"))

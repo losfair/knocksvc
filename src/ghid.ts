@@ -14,15 +14,21 @@ export function getAuthenticatedGhid(req: Request): GhidInfo | string {
   return payload;
 }
 
-export function ensureAuthenticatedGhid(req: Request): GhidInfo | Response {
+export function ensureAuthenticatedGhid(
+  req: Request,
+  redirectBack: boolean = false
+): GhidInfo | Response {
   const ghidInfo = getAuthenticatedGhid(req);
-  if (typeof ghidInfo === "string")
+  if (typeof ghidInfo === "string") {
+    const target = new URL("/ghlogin", req.url);
+    if (redirectBack) target.searchParams.set("callback", req.url);
     return new Response(null, {
       status: 302,
       headers: {
-        location: "/ghlogin",
+        location: target.toString(),
         "x-reason": ghidInfo,
       },
     });
+  }
   return ghidInfo;
 }

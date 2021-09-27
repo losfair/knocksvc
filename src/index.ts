@@ -210,9 +210,13 @@ Router.post("/ghlogout", async (request) => {
 Router.get("/ghlogin", async (request) => {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
+  const callback = url.searchParams.get("callback") || "";
   if (!code) {
+    const redirectUrl = new URL("/ghlogin", request.url);
+    if (callback) redirectUrl.searchParams.set("callback", callback);
     const urlInfo = ghApp.getWebFlowAuthorizationUrl({
       scopes: ["user:email"],
+      redirectUrl: redirectUrl.toString(),
     });
     return Response.redirect(urlInfo.url, 302);
   }
@@ -244,7 +248,7 @@ Router.get("/ghlogin", async (request) => {
   return new Response(null, {
     status: 302,
     headers: {
-      location: "/",
+      location: callback.startsWith(`https://${url.host}/`) ? callback : "/",
       "set-cookie": `knock-ghid=${signed}; Secure; HttpOnly; Path=/; SameSite=Lax`,
     },
   });
@@ -266,6 +270,94 @@ Router.post("/revoke", async (request) => {
     ""
   );
   return Response.redirect("/", 302);
+});
+
+Router.get("/enter_crypto", async (request) => {
+  const ghidInfo = ensureAuthenticatedGhid(request, true);
+  if (ghidInfo instanceof Response) return ghidInfo;
+
+  const url = new URL(request.url);
+  const svcname = url.searchParams.get("svcname");
+  if (!svcname) return new Response("missing svcname");
+  const callback = url.searchParams.get("callback");
+  if (!callback) return new Response("missing callback");
+  const referrer = request.headers.get("referer") || "";
+
+  return new Response(
+    Template.render(
+      `
+<!DOCTYPE html>
+<html>
+<head>
+</head>
+<body>
+<p>Referrer: {{ referrer }}<br>Callback: {{ callback }}</p>
+<form method="post">
+  <span>Cryptographically authenticate service <strong>{{ svcname }}</strong> with GHID <strong>{{ ghid }}</strong></span>
+  <button type="submit">OK</button>
+</form>
+</body>
+</html>
+  `.trim(),
+      {
+        referrer,
+        callback,
+        svcname,
+        ghid: ghidInfo.login,
+      }
+    ),
+    {
+      headers: {
+        "content-type": "text/html",
+      },
+    }
+  );
+});
+
+Router.post("/enter_crypto", async (request) => {
+  const ghidInfo = ensureAuthenticatedGhid(request);
+  if (ghidInfo instanceof Response) return ghidInfo;
+
+  const url = new URL(request.url);
+  const svcname = url.searchParams.get("svcname");
+  if (!svcname) return new Response("missing svcname");
+  const callback = url.searchParams.get("callback");
+  if (!callback) return new Response("missing callback");
+  const callbackUrl = new URL(callback);
+  let ok = false;
+
+  for (const email of ghidInfo.emails) {
+    const allowed = (
+      await appDB.exec(
+        "select 1 from allowlist where email = :email and svcname = :svcname",
+        {
+          email: ["s", email],
+          svcname: ["s", svcname],
+        },
+        "i"
+      )
+    )[0];
+    if (allowed) {
+      ok = true;
+      break;
+    }
+  }
+
+  if (ok) {
+    const signed = sign(
+      {
+        type: "svcgrant",
+        svcname,
+      },
+      86400 * 1000
+    );
+    callbackUrl.searchParams.set("__knocksvc_grant", signed);
+    return Response.redirect(callbackUrl.toString(), 302);
+  } else {
+    return new Response("permission denied", {
+      status: 403,
+    });
+  }
 });
 
 Router.post("/enter", async (request) => {
@@ -306,4 +398,19 @@ Router.post("/enter", async (request) => {
   }
   await appDB.commit();
   return Response.redirect("/", 302);
+});
+
+// CSRF protection
+Router.use("/", async (req, next) => {
+  if (req.method === "POST") {
+    const url = new URL(req.url);
+    if (url.pathname !== "/query") {
+      if (req.headers.get("origin") !== "https://" + url.host) {
+        return new Response("bad origin", {
+          status: 403,
+        });
+      }
+    }
+  }
+  return next(req);
 });
