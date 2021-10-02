@@ -1,0 +1,9 @@
+appid: net.univalent.knocksvc
+build: pnpm run build
+artifact: dist/main.js
+env:
+- ghClientId
+- ghClientSecret
+- sigSecret
+mysql:
+- db
