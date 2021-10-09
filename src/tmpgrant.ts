@@ -1,4 +1,4 @@
-import { JTDSchemaType } from "jsland-types/src/validation/jtd";
+import { JTDSchemaType } from "blueboat-types/src/validation/jtd";
 
 interface TmpGrantReq {
   svcname: string;

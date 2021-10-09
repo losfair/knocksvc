@@ -1,6 +1,6 @@
-/// <reference path="../node_modules/jsland-types/src/index.d.ts" />
+/// <reference path="../node_modules/blueboat-types/src/index.d.ts" />
 
-import { JTDSchemaType } from "jsland-types/src/validation/jtd";
+import { JTDSchemaType } from "blueboat-types/src/validation/jtd";
 import {
   ensureAuthenticatedGhid,
   getAuthenticatedGhid,
@@ -17,6 +17,10 @@ const ghApp = new ExternalService.GitHub.OAuthApp({
 });
 const appDB = App.mysql.db;
 const ttlMs = 86400 * 1000;
+const allowedHostSuffixList = App.mustGetEnv("allowedHostSuffixList")
+  .split(",")
+  .map((x) => x.trim())
+  .filter((x) => x);
 
 interface SvcQuery {
   svcname: string;
@@ -34,7 +38,7 @@ const schema_SvcQuery: JTDSchemaType<SvcQuery> = {
 const validator_SvcQuery = new Validation.JTD.JTDStaticSchema(schema_SvcQuery);
 
 Router.get("/", async (req) => {
-  const clientIp = req.headers.get("x-rw-client-ip") || "";
+  const clientIp = req.headers.get("x-blueboat-client-ip") || "";
   const ghidInfo = getAuthenticatedGhid(req);
   return new Response(
     Template.render(
@@ -184,7 +188,7 @@ async function getGrantListByGrantby(
 }
 
 Router.get("/current", async (request) => {
-  const clientIp = request.headers.get("x-rw-client-ip");
+  const clientIp = request.headers.get("x-blueboat-client-ip");
   if (!clientIp) throw new Error("missing client ip");
 
   return new Response(
@@ -255,7 +259,7 @@ Router.get("/ghlogin", async (request) => {
 });
 
 Router.post("/revoke", async (request) => {
-  const clientIp = request.headers.get("x-rw-client-ip");
+  const clientIp = request.headers.get("x-blueboat-client-ip");
   if (!clientIp) throw new Error("missing client ip");
 
   const ghidInfo = ensureAuthenticatedGhid(request);
@@ -291,7 +295,9 @@ Router.get("/enter_crypto", async (request) => {
 </head>
 <body>
 <p>Callback: {{ callback }}</p>
-<form method="post">
+<form method="post" action="enter_crypto">
+  <input type="hidden" value="{{ svcname }}" name="svcname">
+  <input type="hidden" value="{{ callback }}" name="callback">
   <span>Cryptographically authenticate service <strong>{{ svcname }}</strong> with GHID <strong>{{ ghid }}</strong></span>
   <button type="submit">OK</button>
 </form>
@@ -316,12 +322,20 @@ Router.post("/enter_crypto", async (request) => {
   const ghidInfo = ensureAuthenticatedGhid(request);
   if (ghidInfo instanceof Response) return ghidInfo;
 
-  const url = new URL(request.url);
-  const svcname = url.searchParams.get("svcname");
-  if (!svcname) return new Response("missing svcname");
-  const callback = url.searchParams.get("callback");
-  if (!callback) return new Response("missing callback");
+  const params = new URLSearchParams(await request.text());
+  const svcname = params.get("svcname");
+  if (!svcname) return new Response("missing svcname", { status: 400 });
+  const callback = params.get("callback");
+  if (!callback) return new Response("missing callback", { status: 400 });
   const callbackUrl = new URL(callback);
+  if (callbackUrl.protocol != "https:") {
+    return new Response("https required", { status: 400 });
+  }
+
+  const callbackHost = callbackUrl.host;
+  if (allowedHostSuffixList.findIndex((x) => callbackHost.endsWith(x)) == -1)
+    return new Response("host not allowed", { status: 403 });
+
   let ok = false;
 
   for (const email of ghidInfo.emails) {
@@ -350,7 +364,25 @@ Router.post("/enter_crypto", async (request) => {
       86400 * 1000
     );
     callbackUrl.searchParams.set("__knocksvc_grant", signed);
-    return Response.redirect(callbackUrl.toString(), 302);
+    const callbackUrlStr = callbackUrl.toString();
+    return new Response(
+      `
+<p>
+<a id="url"></a>
+</p>
+<script>
+var url = atob("${Codec.b64encode(new TextEncoder().encode(callbackUrlStr))}");
+var elem = document.getElementById("url");
+elem.href = url;
+elem.innerText = "Return to " + new URL(url).origin;
+</script>
+    `.trim(),
+      {
+        headers: {
+          "Content-Type": "text/html",
+        },
+      }
+    );
   } else {
     return new Response("permission denied", {
       status: 403,
@@ -359,7 +391,7 @@ Router.post("/enter_crypto", async (request) => {
 });
 
 Router.post("/enter", async (request) => {
-  const clientIp = request.headers.get("x-rw-client-ip");
+  const clientIp = request.headers.get("x-blueboat-client-ip");
   if (!clientIp) throw new Error("missing client ip");
 
   const ghidInfo = ensureAuthenticatedGhid(request);
